@@ -1,0 +1,1719 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full bg-slate-900">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculadora de Transmitancia Térmica U y Cumplimiento CTE</title>
+    
+    <!-- Metaetiquetas para funcionamiento óptimo en dispositivo móvil Android (PWA) -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#020617">
+    <link rel="manifest" href="manifest.json">
+    <link rel="shortcut icon" href="https://img.icons8.com/fluency/192/calculator.png" type="image/png">
+
+    <!-- Tailwind CSS para un diseño premium responsivo -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0fdf4',
+                            100: '#dcfce7',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            700: '#15803d',
+                            900: '#14532d',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Fonts para tipografía clara de ingeniería -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        html {
+            scroll-behavior: smooth;
+        }
+    </style>
+</head>
+<body class="h-full text-slate-100 flex flex-col antialiased bg-slate-950">
+
+    <!-- Div principal para la app de React -->
+    <div id="root" class="flex flex-col min-h-screen"></div>
+
+    <!-- Registro inmediato de Service Worker para asegurar modo offline -->
+    <script>
+        // Verificamos si estamos en un protocolo estándar (http/https) para evitar fallos en entornos de pruebas tipo blob:
+        const esProtocoloSoportado = window.location.protocol === 'http:' || window.location.protocol === 'https:';
+        
+        if ('serviceWorker' in navigator && esProtocoloSoportado) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('Service Worker de Calculadora registrado con éxito', reg))
+                    .catch(err => console.error('Error de registro del Service Worker', err));
+            });
+        } else {
+            console.log('Registro del Service Worker omitido de forma segura (entorno de pruebas o previsualizador local)');
+        }
+    </script>
+
+    <!-- Scripts de React, Babel y dependencias necesarias en un solo archivo -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+    <script>
+        // Configurar un preset personalizado de Babel para forzar el runtime clásico de React
+        if (window.Babel) {
+            Babel.registerPreset('classic-react', {
+                presets: [
+                    [Babel.availablePresets['react'], { runtime: 'classic' }]
+                ]
+            });
+        }
+    </script>
+
+    <!-- Código de la aplicación React -->
+    <script type="text/babel" data-presets="classic-react,env">
+        const { useState, useEffect, useMemo } = React;
+
+        // Base de datos de materiales estándar con coeficientes de emisividad (e) para cálculo reflexivo
+        const MATERIAL_CATEGORIES = {
+            aislantes: {
+                label: "Aislamientos Térmicos Tradicionales",
+                color: "bg-emerald-950 border-emerald-500/30 text-emerald-300",
+                materials: [
+                    { name: "Poliestireno Expandido (EPS)", lambda: 0.037, mu: 30, desc: "Sintético clásico, excelente relación coste/aislamiento." },
+                    { name: "Poliestireno Extruido (XPS)", lambda: 0.034, mu: 100, desc: "Alta resistencia mecánica y nula absorción de agua. Ideal para cubiertas y suelos." },
+                    { name: "Lana Mineral (Roca/Vidrio)", lambda: 0.035, mu: 1, desc: "Gran comportamiento térmico, acústico e incombustible ante el fuego. Muy permeable al vapor." },
+                    { name: "Poliuretano Proyectado (PUR)", lambda: 0.028, mu: 60, desc: "Excelente conductividad, aplicación continua que evita puentes térmicos." },
+                    { name: "Corcho Natural Aglomerado", lambda: 0.040, mu: 15, desc: "Aislante natural y ecológico de alta durabilidad." },
+                    { name: "Fibra de Madera", lambda: 0.038, mu: 5, desc: "Ecológico, alta densidad, aporta inercia térmica contra el calor estival." },
+                    { name: "Poliisocianurato (PIR)", lambda: 0.023, mu: 60, desc: "Aislante de muy baja conductividad, óptimo para optimizar espacio." }
+                ]
+            },
+            termoreflexivos: {
+                label: "Aislamientos Termorreflectantes",
+                color: "bg-cyan-950 border-cyan-500/30 text-cyan-300",
+                materials: [
+                    { name: "Lámina Reflectiva Monocapa Alum.", lambda: 0.035, mu: 100000, isReflective: true, emissivity: 0.05, thickness: 0.4, desc: "Espesor de 4 mm. Reduce drásticamente la emisividad de las cámaras de aire adyacentes a e=0.05, anulando la transferencia por radiación." },
+                    { name: "Aislante Multicapa Termorreflectante", lambda: 0.028, mu: 80000, isReflective: true, emissivity: 0.05, thickness: 3.5, desc: "Espesor de 35 mm. Láminas de aluminio puro combinadas con capas de guata y espumas. Aporta resistencia térmica por conducción y radiación." },
+                    { name: "Membrana Barrera Vapor Reflectiva", lambda: 0.22, mu: 150000, isReflective: true, emissivity: 0.05, thickness: 0.1, desc: "Espesor de 1 mm. Bloquea el paso del vapor y optimiza térmicamente la cámara estanca adyacente." }
+                ]
+            },
+            albañileria: {
+                label: "Fábricas y Albañilería",
+                color: "bg-amber-950 border-amber-500/30 text-amber-300",
+                materials: [
+                    { name: "Ladrillo Perforado (Cara Vista)", lambda: 0.700, mu: 10, desc: "Ladrillo denso exterior de gran resistencia climática." },
+                    { name: "Ladrillo Hueco Doble (11-12cm)", lambda: 0.430, mu: 10, desc: "Ladrillo común para hoja interior o tabiquería." },
+                    { name: "Ladrillo Hueco Simple (4-5cm)", lambda: 0.490, mu: 10, desc: "Tabiquería fina de panderete." },
+                    { name: "Bloque Termoarcilla (29cm)", lambda: 0.250, mu: 10, desc: "Bloque cerámico de alta tecnología con múltiples microcámaras." },
+                    { name: "Bloque de Hormigón Ligero", lambda: 0.350, mu: 15, desc: "Bloque aligerado con arlita o aditivos aislantes." },
+                    { name: "Hormigón Armado", lambda: 1.630, mu: 130, desc: "Estructura portante de alta densidad y conductividad térmica. Gran barrera natural al vapor." }
+                ]
+            },
+            morteros: {
+                label: "Morteros, Yesos y Placas",
+                color: "bg-blue-950 border-blue-500/30 text-blue-300",
+                materials: [
+                    { name: "Guarnecido de Yeso / Escayola", lambda: 0.300, mu: 10, desc: "Acabado clásico continuo para interiores." },
+                    { name: "Mortero de Cemento", lambda: 1.300, mu: 15, desc: "Enfoscado clásico de protección exterior o agarre." },
+                    { name: "Mortero Monocapa Exterior", lambda: 0.700, mu: 15, desc: "Revestimiento continuo decorativo e impermeable." },
+                    { name: "Placa de Yeso Laminado (PYL)", lambda: 0.250, mu: 10, desc: "Panel tipo Pladur para trasdosados secos interiores." }
+                ]
+            },
+            camaras: {
+                label: "Cámaras de Aire",
+                color: "bg-indigo-950 border-indigo-500/30 text-indigo-300",
+                materials: [
+                    { name: "Cámara Estanca (Espesor de 2 cm)", lambda: 0.111, mu: 1, isAirCavity: true, fixedR: 0.18, desc: "Cámara estanca estándar (UNE-EN ISO 6946). Su resistencia de 0.18 m²K/W puede subir hasta 0.55 m²K/W si linda con un termorreflectante." },
+                    { name: "Cámara Ligeramente Ventilada", lambda: 0.222, mu: 1, isAirCavity: true, fixedR: 0.09, desc: "Cámara con aberturas limitadas al exterior." }
+                ]
+            },
+            otros: {
+                label: "Otros Materiales e Impermeabilización",
+                color: "bg-purple-950 border-purple-500/30 text-purple-300",
+                materials: [
+                    { name: "Madera de Pino/Abeto", lambda: 0.130, mu: 50, desc: "Material natural de baja conductividad." },
+                    { name: "Piedra Natural (Caliza/Mármol)", lambda: 2.100, mu: 150, desc: "Revestimiento noble de gran inercia y conductividad." },
+                    { name: "Baldosa Cerámica o Gres", lambda: 1.300, mu: 200, desc: "Pavimento clásico para suelos." }
+                ]
+            }
+        };
+
+        const ENVELOPE_TYPES = {
+            fachada: { label: "Muro de Fachada / Aire Exterior", rsi: 0.13, rse: 0.04, key: "US, UM" },
+            cubierta: { label: "Cubierta exterior (Flujo ascendente)", rsi: 0.10, rse: 0.04, key: "UC" },
+            suelo_exterior: { label: "Suelo en contacto con aire exterior", rsi: 0.17, rse: 0.04, key: "US, UM" },
+            terreno_no_hab: { label: "Contacto con Terreno o Espacio No Habitable", rsi: 0.13, rse: 0.00, key: "UT" }
+        };
+
+        const CTE_LIMITS = {
+            "US, UM": { alpha: 0.80, A: 0.70, B: 0.56, C: 0.49, D: 0.41, E: 0.37 },
+            "UC": { alpha: 0.55, A: 0.50, B: 0.44, C: 0.40, D: 0.35, E: 0.33 },
+            "UT": { alpha: 0.90, A: 0.80, B: 0.75, C: 0.70, D: 0.65, E: 0.59 }
+        };
+
+        const CTE_RECOMMENDED = {
+            "US, UM": { alpha: 0.56, A: 0.50, B: 0.38, C: 0.29, D: 0.27, E: 0.23 },
+            "UC": { alpha: 0.50, A: 0.44, B: 0.33, C: 0.23, D: 0.22, E: 0.19 },
+            "UT": { alpha: 0.80, A: 0.80, B: 0.69, C: 0.48, D: 0.48, E: 0.48 }
+        };
+
+        const SPANISH_CITIES = [
+            { name: "Ávila", zone: "E", hdd: 2212, cdd: 90 },
+            { name: "Burgos", zone: "E", hdd: 2150, cdd: 75 },
+            { name: "León", zone: "E", hdd: 2090, cdd: 85 },
+            { name: "Soria", zone: "E", hdd: 2180, cdd: 80 },
+            { name: "Madrid", zone: "D", hdd: 1495, cdd: 480 },
+            { name: "Zaragoza", zone: "D", hdd: 1390, cdd: 540 },
+            { name: "Salamanca", zone: "D", hdd: 1680, cdd: 260 },
+            { name: "Pamplona", zone: "D", hdd: 1450, cdd: 210 },
+            { name: "Granada", zone: "C", hdd: 1210, cdd: 580 },
+            { name: "Barcelona", zone: "B", hdd: 810, cdd: 380 },
+            { name: "Valencia", zone: "B", hdd: 580, cdd: 440 },
+            { name: "Sevilla", zone: "B", hdd: 490, cdd: 760 },
+            { name: "Bilbao", zone: "C", hdd: 1045, cdd: 130 },
+            { name: "Málaga", zone: "A", hdd: 390, cdd: 470 },
+            { name: "Almería", zone: "A", hdd: 350, cdd: 580 },
+            { name: "Las Palmas", zone: "alpha", hdd: 45, cdd: 310 },
+            { name: "Santa Cruz de Tenerife", zone: "alpha", hdd: 50, cdd: 330 }
+        ];
+
+        const HEATING_SYSTEMS = [
+            { id: "aerotermia", name: "Bomba de Calor / Aerotermia (Eficiente)", cop: 3.5, fuelCost: 0.19, co2Factor: 0.14 },
+            { id: "gas_natural", name: "Caldera de Condensación (Gas Natural)", cop: 0.92, fuelCost: 0.08, co2Factor: 0.20 },
+            { id: "gasoil", name: "Caldera de Gasoil estándar", cop: 0.82, fuelCost: 0.11, co2Factor: 0.28 },
+            { id: "electricidad", name: "Radiadores Eléctricos (Efecto Joule)", cop: 1.00, fuelCost: 0.19, co2Factor: 0.14 },
+            { id: "biomasa", name: "Estufa o Caldera de Pellets", cop: 0.85, fuelCost: 0.07, co2Factor: 0.018 }
+        ];
+
+        const COOLING_SYSTEMS = [
+            { id: "split_eficiente", name: "Aire Acondicionado Split (A+++)", seer: 8.5, fuelCost: 0.19, co2Factor: 0.14 },
+            { id: "split_estandar", name: "Aire Acondicionado Split (A)", seer: 5.2, fuelCost: 0.19, co2Factor: 0.14 },
+            { id: "conductos", name: "Centralizado por Conductos", seer: 4.5, fuelCost: 0.19, co2Factor: 0.14 },
+            { id: "fancoils", name: "Enfriadora de Agua + Fancoils", seer: 3.2, fuelCost: 0.19, co2Factor: 0.14 }
+        ];
+
+        const TEMPLATES = [
+            {
+                name: "Fachada Antigua sin aislar (Época NBE-CT-79)",
+                type: "fachada",
+                layers: [
+                    { name: "Guarnecido de Yeso", thickness: 1.5, lambda: 0.30, mu: 10 },
+                    { name: "Ladrillo Hueco Doble (11-12cm)", thickness: 11, lambda: 0.43, mu: 10 },
+                    { name: "Cámara sin ventilar (Espesor < 2 cm)", thickness: 3, isAirCavity: true, fixedR: 0.18, mu: 1 },
+                    { name: "Ladrillo Perforado (Cara Vista)", thickness: 12, lambda: 0.70, mu: 10 },
+                    { name: "Mortero de Cemento", thickness: 1.5, lambda: 1.30, mu: 15 }
+                ]
+            },
+            {
+                name: "Fachada Eficiente SATE",
+                type: "fachada",
+                layers: [
+                    { name: "Guarnecido de Yeso", thickness: 1.5, lambda: 0.30, mu: 10 },
+                    { name: "Ladrillo Hueco Doble (11-12cm)", thickness: 11, lambda: 0.43, mu: 10 },
+                    { name: "Mortero de Cemento", thickness: 1.5, lambda: 1.30, mu: 15 },
+                    { name: "Poliestireno Expandido (EPS) [SATE]", thickness: 10, lambda: 0.037, mu: 30 },
+                    { name: "Mortero Monocapa Exterior", thickness: 0.6, lambda: 0.70, mu: 15 }
+                ]
+            },
+            {
+                name: "Trasdosado Reflexivo de Altas Prestaciones (1 Lámina + 2 Cámaras de Aire)",
+                type: "fachada",
+                layers: [
+                    { name: "Placa de Yeso Laminado (PYL)", thickness: 1.5, lambda: 0.25, mu: 10 },
+                    { name: "Cámara Estanca Caliente (Cámara 1)", thickness: 2, isAirCavity: true, fixedR: 0.18, mu: 1 },
+                    { name: "Lámina Termorreflectante Monocapa Alum.", thickness: 0.4, lambda: 0.035, mu: 100000, isReflective: true, emissivity: 0.05 },
+                    { name: "Cámara Estanca Fría (Cámara 2)", thickness: 2, isAirCavity: true, fixedR: 0.18, mu: 1 },
+                    { name: "Ladrillo Perforado (Cara Vista)", thickness: 12, lambda: 0.70, mu: 10 },
+                    { name: "Mortero de Cemento", thickness: 1.5, lambda: 1.30, mu: 15 }
+                ]
+            },
+            {
+                name: "Cubierta Plana Invertida Tradicional",
+                type: "cubierta",
+                layers: [
+                    { name: "Guarnecido de Yeso", thickness: 1.5, lambda: 0.30, mu: 10 },
+                    { name: "Hormigón Armado", thickness: 25, lambda: 1.63, mu: 130 },
+                    { name: "Poliestireno Extruido (XPS)", thickness: 12, lambda: 0.034, mu: 100 },
+                    { name: "Baldosa Cerámica o Gres", thickness: 2, lambda: 1.30, mu: 200 }
+                ]
+            }
+        ];
+
+        function App() {
+            // --- ESTADOS ---
+            const [envelopeType, setEnvelopeType] = useState("fachada");
+            const [layers, setLayers] = useState(TEMPLATES[2].layers);
+            const [selectedCategory, setSelectedCategory] = useState("termoreflexivos");
+            const [selectedMaterialIndex, setSelectedMaterialIndex] = useState(0);
+            
+            // Nueva Capa
+            const [customThickness, setCustomThickness] = useState(8);
+            const [customLambda, setCustomLambda] = useState(0.037);
+            const [customMu, setCustomMu] = useState(30);
+            const [customName, setCustomName] = useState("");
+            const [isAirCavity, setIsAirCavity] = useState(false);
+            const [fixedR, setFixedR] = useState(0.18);
+            const [customEmissivity, setCustomEmissivity] = useState(null);
+
+            // Municipios y dimensionado
+            const [selectedCity, setSelectedCity] = useState(SPANISH_CITIES[4]); // Madrid
+            const [envelopeArea, setEnvelopeArea] = useState(120);
+            const [baseUValue, setBaseUValue] = useState(1.48);
+            const [costPerM2, setCostPerM2] = useState(45);
+
+            // Sistemas de Climatización Seleccionados
+            const [heatingSystem, setHeatingSystem] = useState(HEATING_SYSTEMS[1]); // Gas Natural
+            const [coolingSystem, setCoolingSystem] = useState(COOLING_SYSTEMS[0]); // Aire Acondicionado Split Eficiente
+
+            // Tarifas y costes editables manualmente para el usuario
+            const [heatingCostRate, setHeatingCostRate] = useState(0.08); // Inicializado con el del sistema activo
+            const [coolingCostRate, setCoolingCostRate] = useState(0.19); // Inicializado con el del sistema activo
+
+            // Sincronizar costes por defecto cuando cambia el sistema de climatización
+            useEffect(() => {
+                setHeatingCostRate(heatingSystem.fuelCost);
+            }, [heatingSystem]);
+
+            useEffect(() => {
+                setCoolingCostRate(coolingSystem.fuelCost);
+            }, [coolingSystem]);
+
+            // Temperaturas y Humedades Relativas (Para Método de Glaser)
+            const [tempIndoor, setTempIndoor] = useState(20);
+            const [tempOutdoor, setTempOutdoor] = useState(0);
+            const [hrIndoor, setHrIndoor] = useState(55);
+            const [hrOutdoor, setHrOutdoor] = useState(80);
+
+            // Tab activa de visualización del dashboard derecho
+            const [activeTab, setActiveTab] = useState("temperatura");
+
+            // Sincronizar inputs al seleccionar un material predefinido
+            useEffect(() => {
+                const cat = MATERIAL_CATEGORIES[selectedCategory];
+                if (cat && cat.materials[selectedMaterialIndex]) {
+                    const mat = cat.materials[selectedMaterialIndex];
+                    setCustomLambda(mat.lambda);
+                    setCustomMu(mat.mu || 10);
+                    setCustomName(mat.name);
+                    setIsAirCavity(mat.isAirCavity || false);
+                    setFixedR(mat.fixedR || 0.18);
+                    setCustomEmissivity(mat.isReflective ? mat.emissivity : null);
+                }
+            }, [selectedCategory, selectedMaterialIndex]);
+
+            // --- OPERACIONES DE CAPAS ---
+            const handleAddLayer = () => {
+                const newLayer = {
+                    name: customName || "Material Personalizado",
+                    thickness: isAirCavity ? 0 : parseFloat(customThickness),
+                    lambda: isAirCavity ? 0 : parseFloat(customLambda),
+                    mu: isAirCavity ? 1 : parseFloat(customMu),
+                    isAirCavity: isAirCavity,
+                    fixedR: isAirCavity ? parseFloat(fixedR) : null,
+                    emissivity: customEmissivity
+                };
+                setLayers([...layers, newLayer]);
+            };
+
+            const handleRemoveLayer = (index) => {
+                setLayers(layers.filter((_, i) => i !== index));
+            };
+
+            const handleMoveLayer = (index, direction) => {
+                const updated = [...layers];
+                const targetIndex = index + direction;
+                if (targetIndex >= 0 && targetIndex < updated.length) {
+                    const temp = updated[index];
+                    updated[index] = updated[targetIndex];
+                    updated[targetIndex] = temp;
+                    setLayers(updated);
+                }
+            };
+
+            const handleLoadTemplate = (tpl) => {
+                setEnvelopeType(tpl.type);
+                setLayers(tpl.layers);
+            };
+
+            // --- ASISTENTE DE CÁMARAS Y MATERIAL REFLEXIVO ---
+            const handleApplyAirCavityScheme = (schemeType) => {
+                let cleanLayers = layers.filter(l => !l.isAirCavity && !l.emissivity);
+
+                const reflexLayer = {
+                    name: "Lámina Termorreflectante Monocapa Alum.",
+                    thickness: 0.4,
+                    lambda: 0.035,
+                    mu: 100000,
+                    isReflective: true,
+                    emissivity: 0.05
+                };
+
+                const airCavity1 = {
+                    name: "Cámara Estanca de Aire 1",
+                    thickness: 2,
+                    isAirCavity: true,
+                    fixedR: 0.18,
+                    mu: 1
+                };
+
+                const airCavity2 = {
+                    name: "Cámara Estanca de Aire 2",
+                    thickness: 2,
+                    isAirCavity: true,
+                    fixedR: 0.18,
+                    mu: 1
+                };
+
+                let newLayers = [...cleanLayers];
+
+                switch (schemeType) {
+                    case "1_camara_caliente":
+                        if (newLayers.length > 0) {
+                            newLayers.splice(1, 0, airCavity1);
+                        } else {
+                            newLayers.unshift(airCavity1);
+                        }
+                        break;
+
+                    case "1_camara_fria":
+                        if (newLayers.length > 1) {
+                            newLayers.splice(newLayers.length - 2, 0, airCavity1);
+                        } else {
+                            newLayers.push(airCavity1);
+                        }
+                        break;
+
+                    case "2_camaras_sandwich":
+                        if (newLayers.length > 0) {
+                            newLayers.splice(1, 0, airCavity1, reflexLayer, airCavity2);
+                        } else {
+                            newLayers.push(airCavity1, reflexLayer, airCavity2);
+                        }
+                        break;
+
+                    case "doble_camara_simple":
+                        if (newLayers.length > 0) {
+                            newLayers.splice(1, 0, airCavity1, airCavity2);
+                        } else {
+                            newLayers.push(airCavity1, airCavity2);
+                        }
+                        break;
+
+                    default:
+                        break;
+                }
+
+                setLayers(newLayers);
+            };
+
+            const handleInsertVaporBarrierOnWarmSide = () => {
+                const hasVaporBarrier = layers.some(l => l.name.toLowerCase().includes("barrera de vapor"));
+                if (hasVaporBarrier) return;
+
+                const newLayers = [...layers];
+                const barrier = {
+                    name: "Barrera de Vapor (Lámina PE, 0.2mm)",
+                    thickness: 0.02,
+                    lambda: 0.33,
+                    mu: 100000,
+                    isAirCavity: false
+                };
+                
+                if (newLayers.length > 0) {
+                    newLayers.splice(1, 0, barrier);
+                } else {
+                    newLayers.push(barrier);
+                }
+                setLayers(newLayers);
+            };
+
+            // --- CÁLCULOS TERMOFÍSICOS AVANZADOS ---
+            const thermalAndVaporCalculations = useMemo(() => {
+                const activeEnvelope = ENVELOPE_TYPES[envelopeType];
+                
+                const analyzedLayers = layers.map((layer, idx) => {
+                    let r = 0;
+                    let sd = 0;
+                    let lowEmissivityActive = false;
+
+                    if (layer.isAirCavity) {
+                        const adjacentBefore = layers[idx - 1];
+                        const adjacentAfter = layers[idx + 1];
+                        const isAdjacentToReflex = (adjacentBefore && adjacentBefore.emissivity < 0.1) || 
+                                                    (adjacentAfter && adjacentAfter.emissivity < 0.1);
+
+                        if (isAdjacentToReflex) {
+                            lowEmissivityActive = true;
+                            r = 0.55; 
+                        } else {
+                            r = layer.fixedR || 0.18;
+                        }
+                        sd = 0.01; 
+                    } else {
+                        r = (layer.thickness / 100) / layer.lambda;
+                        sd = (layer.thickness / 100) * (layer.mu || 1);
+                    }
+
+                    return {
+                        ...layer,
+                        rValue: parseFloat(r.toFixed(4)),
+                        sdValue: parseFloat(sd.toFixed(4)),
+                        lowEmissivityActive
+                    };
+                });
+
+                let cumulativeR = activeEnvelope.rsi;
+                let cumulativeSd = 0;
+
+                const processedLayers = analyzedLayers.map(layer => {
+                    const rStart = cumulativeR;
+                    cumulativeR += layer.rValue;
+                    const rEnd = cumulativeR;
+
+                    const sdStart = cumulativeSd;
+                    cumulativeSd += layer.sdValue;
+                    const sdEnd = cumulativeSd;
+
+                    return {
+                        ...layer,
+                        rStart,
+                        rEnd,
+                        sdStart,
+                        sdEnd
+                    };
+                });
+
+                const rTotal = cumulativeR + activeEnvelope.rse;
+                const uValue = parseFloat((1 / rTotal).toFixed(4));
+
+                const getPsat = (temp) => {
+                    return 610.78 * Math.exp((17.27 * temp) / (temp + 237.3));
+                };
+
+                const pSatIndoor = getPsat(tempIndoor);
+                const pSatOutdoor = getPsat(tempOutdoor);
+
+                const pVaporIndoor = (hrIndoor / 100) * pSatIndoor;
+                const pVaporOutdoor = (hrOutdoor / 100) * pSatOutdoor;
+
+                const deltaT = tempIndoor - tempOutdoor;
+                const heatFlux = deltaT / rTotal;
+
+                const nodes = [];
+                
+                nodes.push({
+                    name: "Ambiente Interior",
+                    temp: tempIndoor,
+                    pSat: parseFloat(pSatIndoor.toFixed(1)),
+                    pVapor: parseFloat(pVaporIndoor.toFixed(1)),
+                    position: 0,
+                    sdPercent: 0
+                });
+
+                const tempSi = tempIndoor - (heatFlux * activeEnvelope.rsi);
+                const pSatSi = getPsat(tempSi);
+                nodes.push({
+                    name: "Superficie Interior",
+                    temp: parseFloat(tempSi.toFixed(1)),
+                    pSat: parseFloat(pSatSi.toFixed(1)),
+                    pVapor: parseFloat(pVaporIndoor.toFixed(1)),
+                    position: 5,
+                    sdPercent: 0
+                });
+
+                let accumulatedPercent = 5;
+                const totalVisualThickness = processedLayers.reduce((acc, curr) => acc + (curr.isAirCavity ? 2 : Math.max(curr.thickness, 0.5)), 0);
+
+                processedLayers.forEach((layer, idx) => {
+                    const tempAtNode = tempIndoor - (heatFlux * layer.rEnd);
+                    const pSatAtNode = getPsat(tempAtNode);
+                    
+                    const pVaporAtNode = cumulativeSd > 0 
+                        ? pVaporIndoor - ((layer.sdEnd / cumulativeSd) * (pVaporIndoor - pVaporOutdoor))
+                        : pVaporOutdoor;
+
+                    const visualWeight = layer.isAirCavity ? 2 : Math.max(layer.thickness, 0.5);
+                    const percentWidth = (visualWeight / totalVisualThickness) * 80;
+                    accumulatedPercent += percentWidth;
+
+                    const sdPercent = cumulativeSd > 0 ? (layer.sdEnd / cumulativeSd) * 100 : 100;
+
+                    nodes.push({
+                        name: `Interfaz ${idx + 1}: ${layer.name}`,
+                        temp: parseFloat(tempAtNode.toFixed(1)),
+                        pSat: parseFloat(pSatAtNode.toFixed(1)),
+                        pVapor: parseFloat(pVaporAtNode.toFixed(1)),
+                        position: accumulatedPercent,
+                        sdPercent: sdPercent
+                    });
+                });
+
+                nodes.push({
+                    name: "Ambiente Exterior",
+                    temp: tempOutdoor,
+                    pSat: parseFloat(pSatOutdoor.toFixed(1)),
+                    pVapor: parseFloat(pVaporOutdoor.toFixed(1)),
+                    position: 100,
+                    sdPercent: 100
+                });
+
+                let interstitialCondensationFound = false;
+                let condensationInterfaces = [];
+
+                for (let i = 1; i < nodes.length - 1; i++) {
+                    const node = nodes[i];
+                    if (node.pVapor >= node.pSat) {
+                        interstitialCondensationFound = true;
+                        condensationInterfaces.push({
+                            nodeIndex: i,
+                            name: node.name,
+                            temp: node.temp,
+                            pVapor: node.pVapor,
+                            pSat: node.pSat,
+                            excess: parseFloat((node.pVapor - node.pSat).toFixed(1))
+                        });
+                    }
+                }
+
+                return {
+                    processedLayers,
+                    rTotal: parseFloat(rTotal.toFixed(4)),
+                    uValue,
+                    rsi: activeEnvelope.rsi,
+                    rse: activeEnvelope.rse,
+                    nodes,
+                    interstitialCondensationFound,
+                    condensationInterfaces,
+                    cumulativeSd: parseFloat(cumulativeSd.toFixed(3))
+                };
+            }, [layers, envelopeType, tempIndoor, tempOutdoor, hrIndoor, hrOutdoor]);
+
+            const currentU = thermalAndVaporCalculations.uValue;
+            const currentRTotal = thermalAndVaporCalculations.rTotal;
+            const interstitialCondensation = thermalAndVaporCalculations.interstitialCondensationFound;
+
+            // --- CTE CHECKS ---
+            const cteChecks = useMemo(() => {
+                const activeEnvelope = ENVELOPE_TYPES[envelopeType];
+                const limitTable = CTE_LIMITS[activeEnvelope.key];
+                const recommendedTable = CTE_RECOMMENDED[activeEnvelope.key];
+                const zoneKey = selectedCity.zone.toLowerCase() === 'α' ? 'alpha' : selectedCity.zone;
+                const uLimit = limitTable[zoneKey] || 0.40;
+                const uRec = recommendedTable[zoneKey] || 0.25;
+
+                return {
+                    uLimit,
+                    uRec,
+                    compliesLimit: currentU <= uLimit,
+                    compliesRecommended: currentU <= uRec
+                };
+            }, [envelopeType, selectedCity, currentU]);
+
+            // --- RIESGO DE MOho SUPERFICIAL ---
+            const condensationRisk = useMemo(() => {
+                const interiorSurfaceTemp = thermalAndVaporCalculations.nodes[1] ? thermalAndVaporCalculations.nodes[1].temp : tempIndoor;
+                let riskText = "Excelente: Sin riesgo de condensaciones superficiales.";
+                let riskColor = "text-emerald-400";
+                let status = "safe";
+
+                if (interiorSurfaceTemp < 12.0) {
+                    riskText = "Crítico: Riesgo muy alto de moho y manchas de humedad. La cara interior está demasiado fría.";
+                    riskColor = "text-red-400";
+                    status = "critical";
+                } else if (interiorSurfaceTemp < 14.0) {
+                    riskText = "Aviso: Nivel de aislamiento débil. Controlar la humedad ambiente interior.";
+                    riskColor = "text-amber-400";
+                    status = "warning";
+                }
+
+                return {
+                    riskText,
+                    riskColor,
+                    status,
+                    surfaceTemp: interiorSurfaceTemp
+                };
+            }, [thermalAndVaporCalculations, tempIndoor]);
+
+            // --- ESTUDIO DE AHORRO ENERGÉTICO DUAL ---
+            const financialSavings = useMemo(() => {
+                const area = parseFloat(envelopeArea) || 0;
+                
+                // 1. Invierno (HDD)
+                const hdd = selectedCity.hdd;
+                const annualHeatingLossBase = (baseUValue * area * hdd * 24) / 1000;
+                const annualHeatingLossDesign = (currentU * area * hdd * 24) / 1000;
+                const heatingEnergySavedUseful = Math.max(0, annualHeatingLossBase - annualHeatingLossDesign);
+                const heatingEnergySavedFinal = heatingEnergySavedUseful / (heatingSystem.cop || 1);
+                const heatingMoneySaved = heatingEnergySavedFinal * parseFloat(heatingCostRate);
+                const heatingCo2Saved = heatingEnergySavedFinal * heatingSystem.co2Factor;
+
+                // 2. Verano (CDD)
+                const cdd = selectedCity.cdd || 300;
+                const annualCoolingGainBase = (baseUValue * area * cdd * 24) / 1000;
+                const annualCoolingGainDesign = (currentU * area * cdd * 24) / 1000;
+                const coolingEnergySavedUseful = Math.max(0, annualCoolingGainBase - annualCoolingGainDesign);
+                const coolingEnergySavedFinal = coolingEnergySavedUseful / (coolingSystem.seer || 1);
+                const coolingMoneySaved = coolingEnergySavedFinal * parseFloat(coolingCostRate);
+                const coolingCo2Saved = coolingEnergySavedFinal * coolingSystem.co2Factor;
+
+                // 3. Totales Combinados
+                const totalUsefulEnergySaved = heatingEnergySavedUseful + coolingEnergySavedUseful;
+                const totalFinalEnergySaved = heatingEnergySavedFinal + coolingEnergySavedFinal;
+                const totalMoneySaved = heatingMoneySaved + coolingMoneySaved;
+                const totalCo2Saved = heatingCo2Saved + coolingCo2Saved;
+
+                const totalInvestment = area * costPerM2;
+                const paybackYears = totalMoneySaved > 0 ? totalInvestment / totalMoneySaved : 0;
+
+                return {
+                    heating: {
+                        lossBase: Math.round(annualHeatingLossBase),
+                        lossDesign: Math.round(annualHeatingLossDesign),
+                        savedUseful: Math.round(heatingEnergySavedUseful),
+                        savedFinal: Math.round(heatingEnergySavedFinal),
+                        moneySaved: Math.round(heatingMoneySaved),
+                        co2Saved: Math.round(heatingCo2Saved)
+                    },
+                    cooling: {
+                        gainBase: Math.round(annualCoolingGainBase),
+                        gainDesign: Math.round(annualCoolingGainDesign),
+                        savedUseful: Math.round(coolingEnergySavedUseful),
+                        savedFinal: Math.round(coolingEnergySavedFinal),
+                        moneySaved: Math.round(coolingMoneySaved),
+                        co2Saved: Math.round(coolingCo2Saved)
+                    },
+                    total: {
+                        savedUseful: Math.round(totalUsefulEnergySaved),
+                        savedFinal: Math.round(totalFinalEnergySaved),
+                        moneySaved: Math.round(totalMoneySaved),
+                        co2Saved: Math.round(totalCo2Saved),
+                        investment: totalInvestment,
+                        paybackYears: paybackYears > 0 ? parseFloat(paybackYears.toFixed(1)) : 0
+                    }
+                };
+            }, [currentU, selectedCity, envelopeArea, heatingSystem, coolingSystem, heatingCostRate, coolingCostRate, costPerM2, baseUValue]);
+
+            return (
+                <div className="flex-grow flex flex-col">
+                    {/* NAVBAR */}
+                    <header className="bg-slate-900 border-b border-slate-800 py-5 px-6 shadow-xl">
+                        <div className="max-w-7xl mx-auto flex flex-col lg:flex-row justify-between items-center gap-4">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-sky-500 rounded-lg text-slate-950 font-bold shadow-lg shadow-sky-500/20">
+                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                                        Calculadora Térmica U, Glaser y Estacional Dual (Invierno/Verano)
+                                        <span className="text-xs bg-sky-500/10 text-sky-400 px-2 py-0.5 rounded border border-sky-500/20">CTE DB-HE / UNE-EN 6946</span>
+                                    </h1>
+                                    <p className="text-xs text-slate-400">Modelado higrotérmico, análisis de condensaciones y cálculo financiero estacional editable</p>
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-2 text-xs">
+                                <span className="text-slate-400 font-medium mr-2">Configurar plantilla:</span>
+                                <div className="inline-flex rounded-md shadow-sm">
+                                    {TEMPLATES.map((tpl, i) => (
+                                        <button
+                                            key={i}
+                                            onClick={() => handleLoadTemplate(tpl)}
+                                            className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] px-3 py-1.5 border-r border-slate-700 last:border-r-0 first:rounded-l-md last:rounded-r-md transition font-semibold"
+                                        >
+                                            {i === 0 ? "⚠️ Antigua" : i === 1 ? "🧱 SATE" : i === 2 ? "✨ Reflexiva" : "🏠 Cubierta"}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* CONTENIDO PRINCIPAL */}
+                    <main className="flex-grow max-w-7xl w-full mx-auto p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+                        
+                        {/* COLUMNA IZQUIERDA */}
+                        <div className="lg:col-span-5 flex flex-col gap-6">
+                            
+                            {/* 1. Tipo de Cerramiento */}
+                            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+                                <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-sky-500"></span> 1. Tipo de Elemento Constructivo
+                                </h2>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {Object.entries(ENVELOPE_TYPES).map(([key, value]) => (
+                                        <button
+                                            key={key}
+                                            onClick={() => setEnvelopeType(key)}
+                                            className={`p-3 text-xs rounded-lg border text-left transition font-medium flex flex-col gap-1 ${
+                                                envelopeType === key
+                                                    ? 'bg-sky-950/40 border-sky-500 text-sky-300'
+                                                    : 'bg-slate-800/50 border-slate-700/60 hover:bg-slate-800 hover:border-slate-600 text-slate-300'
+                                            }`}
+                                        >
+                                            <span className="font-semibold">{value.label}</span>
+                                            <span className="text-[10px] opacity-60">Resistencias: Rsi={value.rsi}, Rse={value.rse}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Asistente Rápido de Cámaras y Reflexivos */}
+                            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+                                <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-cyan-400"></span> Asistente de Cámaras y Reflexivos
+                                </h2>
+                                <p className="text-xs text-slate-400 mb-4">
+                                    Orienta las cámaras estancas de aire respecto al lado caliente (interior del edificio) o frío (exterior del cerramiento):
+                                </p>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                    <button
+                                        onClick={() => handleApplyAirCavityScheme("1_camara_caliente")}
+                                        className="p-2.5 bg-slate-800 hover:bg-slate-750 border border-slate-700 text-left rounded-lg text-xs transition flex flex-col"
+                                    >
+                                        <span className="font-bold text-sky-400">1 Cámara en Cara Caliente</span>
+                                        <span className="text-[10px] text-slate-400 mt-0.5">Tras acabado interior (C1)</span>
+                                    </button>
+                                    <button
+                                        onClick={() => handleApplyAirCavityScheme("1_camara_fria")}
+                                        className="p-2.5 bg-slate-800 hover:bg-slate-750 border border-slate-700 text-left rounded-lg text-xs transition flex flex-col"
+                                    >
+                                        <span className="font-bold text-sky-400">1 Cámara en Cara Fría</span>
+                                        <span className="text-[10px] text-slate-400 mt-0.5">Tras ladrillo de fachada</span>
+                                    </button>
+                                    <button
+                                        onClick={() => handleApplyAirCavityScheme("2_camaras_sandwich")}
+                                        className="p-2.5 bg-cyan-950/40 hover:bg-cyan-950/60 border border-cyan-500/40 text-left rounded-lg text-xs transition flex flex-col col-span-1 md:col-span-2"
+                                    >
+                                        <span className="font-bold text-cyan-300 flex items-center gap-1">
+                                            ✨ Doble Cámara Reflexiva Sándwich
+                                        </span>
+                                        <span className="text-[10px] text-cyan-400/80 mt-0.5">
+                                            Esquema avanzado (Cámara 1 + Lámina Reflex + Cámara 2). Bloqueo total por radiación.
+                                        </span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Constructor del Stack de Capas */}
+                            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg flex-grow flex flex-col">
+                                <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4 flex items-center justify-between">
+                                    <span className="flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-500"></span> 2. Composición de Capas
+                                    </span>
+                                    <span className="text-xs text-slate-400 font-bold">Lado Cálido &rarr; Lado Frío</span>
+                                </h2>
+
+                                {/* Lista de Capas */}
+                                <div className="flex-grow space-y-2 mb-6 max-h-[380px] overflow-y-auto pr-1">
+                                    <div className="text-[10px] font-bold text-orange-400 uppercase tracking-wider px-2 border-b border-orange-500/20 pb-1">
+                                        🏠 CARA CALIENTE (Ambiente Interior)
+                                    </div>
+                                    {layers.length === 0 ? (
+                                        <div className="text-center py-10 border-2 border-dashed border-slate-800 rounded-xl">
+                                            <p className="text-sm text-slate-500">Sin capas añadidas.</p>
+                                        </div>
+                                    ) : (
+                                        thermalAndVaporCalculations.processedLayers.map((layer, idx) => (
+                                            <div
+                                                key={idx}
+                                                className={`flex items-center justify-between p-3 rounded-lg border transition ${
+                                                    layer.emissivity < 0.1
+                                                        ? 'bg-cyan-950/50 border-cyan-500/40'
+                                                        : layer.isAirCavity
+                                                        ? 'bg-indigo-950/40 border-indigo-500/30'
+                                                        : 'bg-slate-850 border-slate-800 hover:border-slate-700'
+                                                }`}
+                                            >
+                                                <div className="flex-grow min-w-0 pr-3">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-xs font-bold text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded">
+                                                            C{idx + 1}
+                                                        </span>
+                                                        <span className="text-xs font-semibold text-slate-200 truncate block">
+                                                            {layer.name}
+                                                        </span>
+                                                        {layer.lowEmissivityActive && (
+                                                            <span className="text-[9px] bg-cyan-500/20 text-cyan-300 font-bold px-1 rounded animate-pulse">
+                                                                BAJA EMISIVIDAD (R=0.55)
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-1">
+                                                        {layer.isAirCavity ? (
+                                                            <span>Cámara Aire | R = {layer.rValue} m²K/W</span>
+                                                        ) : (
+                                                            <>
+                                                                <span>Espesor: <strong className="text-slate-300">{layer.thickness} cm</strong></span>
+                                                                <span>&lambda;: <strong className="text-slate-300">{layer.lambda}</strong></span>
+                                                                <span>&mu;: <strong className="text-sky-400">{layer.mu || 1}</strong></span>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="flex items-center gap-1 shrink-0">
+                                                    <button
+                                                        onClick={() => handleMoveLayer(idx, -1)}
+                                                        disabled={idx === 0}
+                                                        className="p-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-400"
+                                                        title="Mover hacia el interior"
+                                                    >
+                                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M5 15l7-7 7 7"/></svg>
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleMoveLayer(idx, 1)}
+                                                        disabled={idx === layers.length - 1}
+                                                        className="p-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-400"
+                                                        title="Mover hacia el exterior"
+                                                    >
+                                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleRemoveLayer(idx)}
+                                                        className="p-1 rounded bg-red-950/40 hover:bg-red-900 border border-red-900/30 text-red-400 ml-1"
+                                                    >
+                                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                    <div className="text-[10px] font-bold text-blue-400 uppercase tracking-wider px-2 border-t border-blue-500/20 pt-2 text-right">
+                                        ❄️ CARA FRÍA (Ambiente Exterior)
+                                    </div>
+                                </div>
+
+                                {/* Formulario Añadir Nueva Capa */}
+                                <div className="bg-slate-950 border border-slate-850 rounded-xl p-4 mt-auto">
+                                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">
+                                        ➕ Añadir Elemento Personalizado
+                                    </h3>
+                                    
+                                    <div className="grid grid-cols-2 gap-2 mb-3">
+                                        <div>
+                                            <label className="block text-[10px] font-semibold text-slate-400 mb-1">Categoría</label>
+                                            <select
+                                                value={selectedCategory}
+                                                onChange={(e) => {
+                                                    setSelectedCategory(e.target.value);
+                                                    setSelectedMaterialIndex(0);
+                                                }}
+                                                className="w-full bg-slate-900 border border-slate-800 text-xs text-white rounded p-1.5 focus:outline-none"
+                                            >
+                                                {Object.entries(MATERIAL_CATEGORIES).map(([key, val]) => (
+                                                    <option key={key} value={key}>{val.label}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-[10px] font-semibold text-slate-400 mb-1">Material Base</label>
+                                            <select
+                                                value={selectedMaterialIndex}
+                                                onChange={(e) => setSelectedMaterialIndex(parseInt(e.target.value))}
+                                                className="w-full bg-slate-900 border border-slate-800 text-xs text-white rounded p-1.5 focus:outline-none"
+                                            >
+                                                {MATERIAL_CATEGORIES[selectedCategory]?.materials.map((mat, i) => (
+                                                    <option key={i} value={i}>{mat.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-3 p-3 bg-slate-900/60 rounded-lg border border-slate-850 mb-3">
+                                        <div>
+                                            <label className="block text-[10px] font-semibold text-slate-400 mb-1">Nombre de la Capa</label>
+                                            <input
+                                                type="text"
+                                                value={customName}
+                                                onChange={(e) => setCustomName(e.target.value)}
+                                                className="w-full bg-slate-950 border border-slate-800 text-xs text-slate-200 p-1.5 rounded focus:outline-none"
+                                            />
+                                        </div>
+
+                                        {!isAirCavity ? (
+                                            <div className="grid grid-cols-3 gap-2">
+                                                <div>
+                                                    <label className="block text-[10px] font-semibold text-slate-400 mb-1">Espesor (cm)</label>
+                                                    <input
+                                                        type="number"
+                                                        step="0.01"
+                                                        value={customThickness}
+                                                        onChange={(e) => setCustomThickness(parseFloat(e.target.value) || 0)}
+                                                        className="w-full bg-slate-950 border border-slate-800 text-xs text-center text-slate-200 p-1.5 rounded"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] font-semibold text-slate-400 mb-1">Conductiv. (&lambda;)</label>
+                                                    <input
+                                                        type="number"
+                                                        step="0.001"
+                                                        value={customLambda}
+                                                        onChange={(e) => setCustomLambda(parseFloat(e.target.value) || 0.037)}
+                                                        className="w-full bg-slate-950 border border-slate-800 text-xs text-center text-slate-200 p-1.5 rounded"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] font-semibold text-slate-400 mb-1">Vapor (&mu;)</label>
+                                                    <input
+                                                        type="number"
+                                                        value={customMu}
+                                                        onChange={(e) => setCustomMu(parseInt(e.target.value) || 1)}
+                                                        className="w-full bg-slate-950 border border-slate-800 text-xs text-center text-sky-400 font-bold p-1.5 rounded"
+                                                    />
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div>
+                                                    <label className="block text-[10px] font-semibold text-slate-400 mb-1">R Base (m²·K/W)</label>
+                                                    <input
+                                                        type="number"
+                                                        step="0.01"
+                                                        value={fixedR}
+                                                        onChange={(e) => setFixedR(parseFloat(e.target.value) || 0.18)}
+                                                        className="w-full bg-slate-950 border border-slate-800 text-xs text-center text-slate-200 p-1 rounded"
+                                                    />
+                                                </div>
+                                                <div className="flex items-center pt-4">
+                                                    <span className="text-[9px] text-slate-400 leading-tight">Calculado s/UNE-EN ISO 6946.</span>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <div className="flex items-center gap-2 pt-1">
+                                            <input 
+                                                type="checkbox" 
+                                                id="reflectiveCheckbox"
+                                                checked={customEmissivity !== null} 
+                                                onChange={(e) => setCustomEmissivity(e.target.checked ? 0.05 : null)}
+                                                className="rounded bg-slate-950 border-slate-800 accent-cyan-500"
+                                            />
+                                            <label htmlFor="reflectiveCheckbox" className="text-[10px] font-semibold text-cyan-400 cursor-pointer">
+                                                Lámina termorreflectora de aluminio pura (&epsilon; = 0.05)
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <button
+                                        onClick={handleAddLayer}
+                                        className="w-full bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-2 px-4 rounded text-xs transition flex items-center justify-center gap-2"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
+                                        Insertar Capa al Cerramiento
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* COLUMNA DERECHA */}
+                        <div className="lg:col-span-7 flex flex-col gap-6">
+                            
+                            {/* DASHBOARD DE TABS */}
+                            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg flex flex-col">
+                                
+                                {/* INDICADORES PRINCIPALES */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-b border-slate-800 pb-5 mb-5 text-center">
+                                    <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
+                                        <span className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Transmitancia Térmica U</span>
+                                        <span className="text-3xl font-extrabold text-emerald-400 tracking-tight block my-1">
+                                            {currentU}
+                                        </span>
+                                        <span className="text-[10px] text-slate-400">W/m²·K</span>
+                                    </div>
+                                    <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
+                                        <span className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Resistencia Térmica RT</span>
+                                        <span className="text-3xl font-extrabold text-slate-200 tracking-tight block my-1">
+                                            {currentRTotal}
+                                        </span>
+                                        <span className="text-[10px] text-slate-400">m²·K/W</span>
+                                    </div>
+                                    <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 flex flex-col justify-center items-center">
+                                        <span className="block text-[11px] font-semibold text-sky-400 uppercase tracking-wide">Espesor de Aire Eq. Sd</span>
+                                        <span className="text-2xl font-extrabold text-sky-300 tracking-tight block my-1">
+                                            {thermalAndVaporCalculations.cumulativeSd} <span className="text-sm font-normal">m</span>
+                                        </span>
+                                        <span className="text-[10px] text-slate-500">Resistencia Vapor</span>
+                                    </div>
+                                </div>
+
+                                {/* SELECTOR DE PESTAÑAS */}
+                                <div className="flex border-b border-slate-800 gap-2 mb-6">
+                                    <button
+                                        onClick={() => setActiveTab("temperatura")}
+                                        className={`px-4 py-2 text-xs font-semibold border-b-2 transition ${
+                                            activeTab === "temperatura" 
+                                                ? "border-emerald-500 text-emerald-400" 
+                                                : "border-transparent text-slate-400 hover:text-white"
+                                        }`}
+                                    >
+                                        Gradiente de Temperatura
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveTab("glaser")}
+                                        className={`px-4 py-2 text-xs font-semibold border-b-2 transition flex items-center gap-1.5 ${
+                                            activeTab === "glaser" 
+                                                ? "border-sky-500 text-sky-400" 
+                                                : "border-transparent text-slate-400 hover:text-white"
+                                        }`}
+                                    >
+                                        Condensaciones (Glaser)
+                                        {interstitialCondensation && (
+                                            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                                        )}
+                                    </button>
+                                </div>
+
+                                {/* CONDICIONES AMBIENTALES DE DISEÑO */}
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-slate-950 border border-slate-850 p-3 rounded-lg mb-4 text-xs">
+                                    <div>
+                                        <label className="block text-[10px] text-slate-400 mb-1">Temp. Interior:</label>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="number"
+                                                value={tempIndoor}
+                                                onChange={(e) => setTempIndoor(parseInt(e.target.value) || 20)}
+                                                className="w-full bg-slate-900 border border-slate-800 rounded p-1 text-center"
+                                            />
+                                            <span>ºC</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-400 mb-1">HR Interior:</label>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="number"
+                                                value={hrIndoor}
+                                                onChange={(e) => setHrIndoor(parseInt(e.target.value) || 55)}
+                                                className="w-full bg-slate-900 border border-slate-800 rounded p-1 text-center"
+                                            />
+                                            <span>%</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-400 mb-1">Temp. Exterior:</label>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="number"
+                                                value={tempOutdoor}
+                                                onChange={(e) => setTempOutdoor(parseInt(e.target.value) || 0)}
+                                                className="w-full bg-slate-900 border border-slate-800 rounded p-1 text-center text-blue-400"
+                                            />
+                                            <span>ºC</span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-400 mb-1">HR Exterior:</label>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="number"
+                                                value={hrOutdoor}
+                                                onChange={(e) => setHrOutdoor(parseInt(e.target.value) || 80)}
+                                                className="w-full bg-slate-900 border border-slate-800 rounded p-1 text-center text-blue-400"
+                                            />
+                                            <span>%</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* TAB 1: GRADIENTE DE TEMPERATURA */}
+                                {activeTab === "temperatura" && (
+                                    <div className="mb-6 space-y-4">
+                                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                                            📈 Perfil del Gradiente de Temperatura e Interfases
+                                        </h3>
+                                        
+                                        <div className="bg-slate-950 rounded-xl p-4 border border-slate-850 overflow-hidden relative">
+                                            <div className="absolute left-3 top-3 bottom-3 border-r border-slate-800/60 flex flex-col justify-between text-[10px] text-slate-500 pr-1">
+                                                <span>{tempIndoor}ºC</span>
+                                                <span>{Math.round((tempIndoor + tempOutdoor)/2)}ºC</span>
+                                                <span>{tempOutdoor}ºC</span>
+                                            </div>
+
+                                            <svg viewBox="0 0 500 180" className="w-full h-auto pl-10">
+                                                <rect x="0" y="0" width="30" height="180" fill="#1e1b4b" fillOpacity="0.2"/>
+                                                <text x="15" y="15" fontSize="7" fill="#818cf8" fontWeight="bold" textAnchor="middle">Interior</text>
+                                                <rect x="470" y="0" width="30" height="180" fill="#172554" fillOpacity="0.2"/>
+                                                <text x="485" y="15" fontSize="7" fill="#60a5fa" fontWeight="bold" textAnchor="middle">Exterior</text>
+
+                                                {thermalAndVaporCalculations.processedLayers.map((layer, idx) => {
+                                                    const prevNode = thermalAndVaporCalculations.nodes[idx + 1];
+                                                    const nextNode = thermalAndVaporCalculations.nodes[idx + 2];
+                                                    if (!prevNode || !nextNode) return null;
+
+                                                    const xStart = 30 + (prevNode.position / 100) * 440;
+                                                    const xEnd = 30 + (nextNode.position / 100) * 440;
+                                                    const width = xEnd - xStart;
+
+                                                    let layerColor = "#334155";
+                                                    if (layer.isAirCavity) layerColor = "#1e1b4b";
+                                                    else if (layer.emissivity < 0.1) layerColor = "#0284c7";
+                                                    else if (layer.lambda <= 0.045) layerColor = "#064e3b";
+                                                    else if (layer.lambda >= 1.0) layerColor = "#451a03";
+                                                    else if (layer.lambda >= 0.25) layerColor = "#78350f";
+
+                                                    return (
+                                                        <g key={idx}>
+                                                            <rect
+                                                                x={xStart}
+                                                                y="25"
+                                                                width={width}
+                                                                height="130"
+                                                                fill={layerColor}
+                                                                stroke="#0f172a"
+                                                                strokeWidth="1"
+                                                                fillOpacity="0.75"
+                                                            />
+                                                            {width > 15 && (
+                                                                <text
+                                                                    x={xStart + width/2}
+                                                                    y="145"
+                                                                    fontSize="6.5"
+                                                                    fill="#cbd5e1"
+                                                                    fontWeight="bold"
+                                                                    textAnchor="middle"
+                                                                    writingMode="vertical-rl"
+                                                                >
+                                                                    {layer.name.substring(0, 15)}...
+                                                                </text>
+                                                            )}
+                                                        </g>
+                                                    );
+                                                })}
+
+                                                <path
+                                                    d={thermalAndVaporCalculations.nodes.map((node, i) => {
+                                                        const x = 30 + (node.position / 100) * 440;
+                                                        const delta = tempIndoor - tempOutdoor;
+                                                        const relativeTemp = (node.temp - tempOutdoor) / (delta || 1);
+                                                        const y = 145 - (relativeTemp * 110);
+                                                        return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+                                                    }).join(' ')}
+                                                    fill="none"
+                                                    stroke="#ef4444"
+                                                    strokeWidth="2.5"
+                                                    strokeLinecap="round"
+                                                />
+
+                                                {thermalAndVaporCalculations.nodes.map((node, i) => {
+                                                    const x = 30 + (node.position / 100) * 440;
+                                                    const delta = tempIndoor - tempOutdoor;
+                                                    const relativeTemp = (node.temp - tempOutdoor) / (delta || 1);
+                                                    const y = 145 - (relativeTemp * 110);
+
+                                                    const isEdgeNode = i === 0 || i === 1 || i === thermalAndVaporCalculations.nodes.length - 1 || i === thermalAndVaporCalculations.nodes.length - 2;
+
+                                                    return (
+                                                        <g key={i}>
+                                                            <circle cx={x} cy={y} r="3.5" fill="#ffffff" stroke="#ef4444" strokeWidth="1.5" />
+                                                            {isEdgeNode && (
+                                                                <text x={x} y={y - 7} fontSize="7" fill="#ffffff" fontWeight="bold" textAnchor="middle">
+                                                                    {node.temp}ºC
+                                                                </text>
+                                                            )}
+                                                        </g>
+                                                    );
+                                                })}
+                                            </svg>
+                                        </div>
+
+                                        <div className="p-3 rounded-lg bg-slate-950 border border-slate-850 flex items-center gap-3">
+                                            <div className={`w-3 h-3 rounded-full shrink-0 ${
+                                                condensationRisk.status === 'safe' ? 'bg-emerald-500' : 'bg-red-500'
+                                            }`}></div>
+                                            <div className="text-xs">
+                                                <span className="font-bold block text-slate-300">Riesgo Superficial: Cara Interior a {condensationRisk.surfaceTemp}ºC</span>
+                                                <p className={`mt-0.5 ${condensationRisk.riskColor} text-[11px]`}>{condensationRisk.riskText}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* TAB 2: DIAGRAMA DE GLASER */}
+                                {activeTab === "glaser" && (
+                                    <div className="mb-6 space-y-4">
+                                        <div className="flex justify-between items-center">
+                                            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                                                🌬️ Comprobación Higrotérmica (Método de Glaser)
+                                            </h3>
+                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                                interstitialCondensation 
+                                                    ? "bg-red-950 border border-red-500/40 text-red-400 animate-pulse" 
+                                                    : "bg-emerald-950 border border-emerald-500/40 text-emerald-400"
+                                            }`}>
+                                                {interstitialCondensation ? "⚠️ CONDENSACIÓN DETECTADA" : "✅ EXENTO DE CONDENSACIÓN"}
+                                            </span>
+                                        </div>
+
+                                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                                            El vapor se desplaza del lado caliente al frío. Si la <strong>Presión de Vapor (línea azul)</strong> toca la <strong>Presión de Saturación (línea roja discontinua)</strong>, se producirá condensación intersticial líquida.
+                                        </p>
+
+                                        {/* DIAGRAMA DE GLASER */}
+                                        <div className="bg-slate-950 rounded-xl p-4 border border-slate-850 overflow-hidden relative">
+                                            <div className="absolute left-3 top-3 bottom-3 border-r border-slate-800/60 flex flex-col justify-between text-[9px] text-slate-500 pr-1">
+                                                <span>{Math.round(thermalAndVaporCalculations.nodes[0].pSat)} Pa</span>
+                                                <span>{Math.round(thermalAndVaporCalculations.nodes[0].pSat / 2)} Pa</span>
+                                                <span>0 Pa</span>
+                                            </div>
+
+                                            <svg viewBox="0 0 500 180" className="w-full h-auto pl-10">
+                                                {thermalAndVaporCalculations.processedLayers.map((layer, idx) => {
+                                                    const prevNode = thermalAndVaporCalculations.nodes[idx + 1];
+                                                    const nextNode = thermalAndVaporCalculations.nodes[idx + 2];
+                                                    if (!prevNode || !nextNode) return null;
+
+                                                    const xStart = 30 + (prevNode.position / 100) * 440;
+                                                    const xEnd = 30 + (nextNode.position / 100) * 440;
+                                                    const width = xEnd - xStart;
+
+                                                    return (
+                                                        <rect
+                                                            key={idx}
+                                                            x={xStart}
+                                                            y="25"
+                                                            width={width}
+                                                            height="130"
+                                                            fill="#1e293b"
+                                                            stroke="#0f172a"
+                                                            strokeWidth="0.5"
+                                                            fillOpacity="0.3"
+                                                        />
+                                                    );
+                                                })}
+
+                                                <path
+                                                    d={thermalAndVaporCalculations.nodes.map((node, i) => {
+                                                        const x = 30 + (node.position / 100) * 440;
+                                                        const maxPsat = thermalAndVaporCalculations.nodes[0].pSat;
+                                                        const y = 145 - (node.pSat / maxPsat * 110);
+                                                        return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+                                                    }).join(' ')}
+                                                    fill="none"
+                                                    stroke="#ef4444"
+                                                    strokeWidth="1.5"
+                                                    strokeDasharray="4,4"
+                                                />
+
+                                                <path
+                                                    d={thermalAndVaporCalculations.nodes.map((node, i) => {
+                                                        const x = 30 + (node.position / 100) * 440;
+                                                        const maxPsat = thermalAndVaporCalculations.nodes[0].pSat;
+                                                        const y = 145 - (node.pVapor / maxPsat * 110);
+                                                        return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+                                                    }).join(' ')}
+                                                    fill="none"
+                                                    stroke="#0284c7"
+                                                    strokeWidth="2.5"
+                                                />
+
+                                                {thermalAndVaporCalculations.nodes.map((node, i) => {
+                                                    const x = 30 + (node.position / 100) * 440;
+                                                    const maxPsat = thermalAndVaporCalculations.nodes[0].pSat;
+                                                    const yVapor = 145 - (node.pVapor / maxPsat * 110);
+
+                                                    const isHazard = node.pVapor >= node.pSat;
+
+                                                    return (
+                                                        <g key={i}>
+                                                            <circle cx={x} cy={yVapor} r="3" fill="#0284c7" />
+                                                            {isHazard && i > 0 && i < thermalAndVaporCalculations.nodes.length - 1 && (
+                                                                <g>
+                                                                    <line x1={x} y1="25" x2={x} y2="155" stroke="#ef4444" strokeWidth="1" strokeDasharray="2,2" />
+                                                                    <circle cx={x} cy={yVapor} r="5.5" fill="#ef4444" className="animate-pulse" />
+                                                                </g>
+                                                            )}
+                                                        </g>
+                                                    );
+                                                })}
+                                            </svg>
+                                            
+                                            <div className="mt-2 flex justify-between text-[11px] text-slate-400">
+                                                <span className="flex items-center gap-1.5"><span className="w-2.5 h-0.5 bg-red-400 border-dashed inline-block"></span> P. Saturación (Física)</span>
+                                                <span className="flex items-center gap-1.5"><span className="w-2.5 h-0.5 bg-sky-500 inline-block"></span> P. Vapor Calculada</span>
+                                                <span className="text-red-400 font-semibold flex items-center gap-1">
+                                                    <span className="w-2 h-2 rounded-full bg-red-500 inline-block"></span> Zona de Riesgo
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        {interstitialCondensation ? (
+                                            <div className="bg-red-950/30 border border-red-500/30 rounded-xl p-4 space-y-3">
+                                                <div className="flex items-start gap-3">
+                                                    <span className="text-2xl mt-0.5">🚨</span>
+                                                    <div>
+                                                        <h4 className="text-xs font-bold text-red-300 uppercase">Punto crítico detectado:</h4>
+                                                        <p className="text-[11px] text-slate-300 mt-1">
+                                                            El vapor alcanza la saturación en las siguientes interfaces:
+                                                        </p>
+                                                        <ul className="list-disc list-inside text-[11px] text-red-400 font-mono mt-1.5">
+                                                            {thermalAndVaporCalculations.condensationInterfaces.map((c, i) => (
+                                                                <li key={i}><strong>{c.name}</strong> a {c.temp}ºC</li>
+                                                            ))}
+                                                        </ul>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={handleInsertVaporBarrierOnWarmSide}
+                                                    className="w-full bg-sky-500 hover:bg-sky-600 text-slate-950 font-bold py-2 px-3 rounded text-xs transition flex items-center justify-center gap-2"
+                                                >
+                                                    🛠️ Insertar Barrera de Vapor en la Cara Caliente
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="bg-emerald-950/30 border border-emerald-500/20 rounded-xl p-4 flex items-start gap-3">
+                                                <span className="text-2xl">🛡️</span>
+                                                <div>
+                                                    <h4 className="text-xs font-bold text-emerald-400 uppercase">Cerramiento libre de condensaciones:</h4>
+                                                    <p className="text-[11px] text-slate-300 mt-1">
+                                                        La presión de vapor se mantiene inferior al límite físico de saturación en todas las capas. Estructura sana y transpirable.
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* PANEL DE CUMPLIMIENTO CTE */}
+                                <div className="bg-slate-950 rounded-xl p-5 border border-slate-850">
+                                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">
+                                        📋 Panel de Cumplimiento CTE DB-HE 2019
+                                    </h3>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                        <div>
+                                            <label className="block text-[11px] font-semibold text-slate-400 mb-1">Zona Climática / Municipio:</label>
+                                            <select
+                                                value={selectedCity.name}
+                                                onChange={(e) => {
+                                                    const city = SPANISH_CITIES.find(c => c.name === e.target.value);
+                                                    if (city) setSelectedCity(city);
+                                                }}
+                                                className="w-full bg-slate-900 border border-slate-800 text-xs text-white rounded p-2 focus:outline-none"
+                                            >
+                                                {SPANISH_CITIES.map((city, idx) => (
+                                                    <option key={idx} value={city.name}>{city.name} (Zona {city.zone})</option>
+                                                ))}
+                                            </select>
+                                            <span className="text-[10px] text-slate-500 mt-1 block">
+                                                Grados día de invierno: <strong>{selectedCity.hdd} GD</strong>.
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center bg-slate-900/60 rounded-lg p-3 border border-slate-850 text-xs">
+                                            <p className="text-slate-400">
+                                                Los límites del Código Técnico de la Edificación (CTE) se aplican según la zona climática provincial asignada al municipio.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-4 pt-3 border-t border-slate-900">
+                                        <div>
+                                            <div className="flex justify-between items-center text-xs mb-1.5">
+                                                <span className="font-medium text-slate-300">
+                                                    Límite Máximo del CTE: <strong className="text-red-400">{cteChecks.uLimit} W/m²K</strong>
+                                                </span>
+                                                <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${
+                                                    cteChecks.compliesLimit ? 'bg-emerald-950/80 text-emerald-400' : 'bg-red-950/80 text-red-400'
+                                                }`}>
+                                                    {cteChecks.compliesLimit ? 'CUMPLE' : 'NO CUMPLE'}
+                                                </span>
+                                            </div>
+                                            <div className="w-full bg-slate-900 rounded-full h-2">
+                                                <div 
+                                                    className={`h-full rounded-full transition-all duration-500 ${cteChecks.compliesLimit ? 'bg-emerald-500' : 'bg-red-500'}`}
+                                                    style={{ width: `${Math.min(100, (currentU / cteChecks.uLimit) * 100)}%` }}
+                                                ></div>
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <div className="flex justify-between items-center text-xs mb-1.5">
+                                                <span className="font-medium text-slate-300">
+                                                    Recomendado Alta Eficiencia: <strong className="text-blue-400">{cteChecks.uRec} W/m²K</strong>
+                                                </span>
+                                                <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${
+                                                    cteChecks.compliesRecommended ? 'bg-emerald-950/80 text-emerald-400' : 'bg-slate-900 text-slate-500'
+                                                }`}>
+                                                    {cteChecks.compliesRecommended ? 'EXCELENTE' : 'Estándar'}
+                                                </span>
+                                            </div>
+                                            <div className="w-full bg-slate-900 rounded-full h-2">
+                                                <div 
+                                                    className={`h-full rounded-full transition-all duration-500 ${cteChecks.compliesRecommended ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                                                    style={{ width: `${Math.min(100, (currentU / cteChecks.uRec) * 100)}%` }}
+                                                ></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* ESTUDIO DE AHORRO DUAL */}
+                            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg">
+                                <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4 flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-blue-400"></span> 3. Estudio de Ahorro Energético y Amortización
+                                </h3>
+
+                                <div className="bg-slate-950 border border-slate-850 p-4 rounded-xl space-y-4 mb-6">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-semibold text-slate-400 mb-1 flex justify-between">
+                                                <span>Área total a aislar:</span>
+                                                <span className="text-blue-400 font-bold">{envelopeArea} m²</span>
+                                            </label>
+                                            <div className="flex gap-2 items-center">
+                                                <input
+                                                    type="number"
+                                                    value={envelopeArea}
+                                                    onChange={(e) => setEnvelopeArea(parseFloat(e.target.value) || 0)}
+                                                    className="w-20 bg-slate-900 border border-slate-800 text-xs text-center text-slate-200 p-1.5 rounded focus:outline-none"
+                                                />
+                                                <input
+                                                    type="range"
+                                                    min="10"
+                                                    max="500"
+                                                    step="5"
+                                                    value={envelopeArea}
+                                                    onChange={(e) => setEnvelopeArea(parseInt(e.target.value))}
+                                                    className="flex-grow accent-blue-500 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-xs font-semibold text-slate-400 mb-1 flex justify-between">
+                                                <span>U Base Original (Sin aislar):</span>
+                                                <span className="text-amber-500 font-bold">{baseUValue} W/m²K</span>
+                                            </label>
+                                            <div className="flex gap-2 items-center">
+                                                <input
+                                                    type="number"
+                                                    step="0.05"
+                                                    value={baseUValue}
+                                                    onChange={(e) => setBaseUValue(parseFloat(e.target.value) || 1.6)}
+                                                    className="w-20 bg-slate-900 border border-slate-800 text-xs text-center text-slate-200 p-1.5 rounded focus:outline-none"
+                                                />
+                                                <select
+                                                    onChange={(e) => setBaseUValue(parseFloat(e.target.value))}
+                                                    className="flex-grow bg-slate-900 border border-slate-800 text-[11px] text-white rounded p-1.5 focus:outline-none"
+                                                >
+                                                    <option value="1.48">Fachada sin aislar (1.48)</option>
+                                                    <option value="0.75">Fachada regular (0.75)</option>
+                                                    <option value={cteChecks.uLimit}>Límite del CTE ({cteChecks.uLimit})</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* CALEFACCIÓN */}
+                                    <div className="pt-3 border-t border-slate-900">
+                                        <h4 className="text-xs font-bold text-orange-400 uppercase tracking-wide mb-2">
+                                            🔥 Régimen de Invierno (Calefacción)
+                                        </h4>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-[11px] text-slate-400 mb-1">Generador térmico:</label>
+                                                <select
+                                                    value={heatingSystem.id}
+                                                    onChange={(e) => {
+                                                        const hs = HEATING_SYSTEMS.find(h => h.id === e.target.value);
+                                                        if (hs) setHeatingSystem(hs);
+                                                    }}
+                                                    className="w-full bg-slate-900 border border-slate-800 text-xs text-white rounded p-1.5 focus:outline-none"
+                                                >
+                                                    {HEATING_SYSTEMS.map((system) => (
+                                                        <option key={system.id} value={system.id}>{system.name}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-[11px] text-slate-400 mb-1 flex justify-between">
+                                                    <span>Coste Energía:</span>
+                                                    <span className="text-[10px] text-slate-500">Rendimiento: {Math.round(heatingSystem.cop*100)}%</span>
+                                                </label>
+                                                <div className="flex gap-2 items-center">
+                                                    <input
+                                                        type="number"
+                                                        step="0.001"
+                                                        value={heatingCostRate}
+                                                        onChange={(e) => setHeatingCostRate(parseFloat(e.target.value) || 0)}
+                                                        className="w-full bg-slate-900 border border-slate-800 text-xs text-slate-200 p-1.5 rounded focus:outline-none font-semibold"
+                                                    />
+                                                    <span className="text-xs text-slate-400">€/kWh</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* REFRIGERACIÓN */}
+                                    <div className="pt-3 border-t border-slate-900">
+                                        <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-wide mb-2">
+                                            ❄️ Régimen de Verano (Refrigeración)
+                                        </h4>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-[11px] text-slate-400 mb-1">Climatizadora:</label>
+                                                <select
+                                                    value={coolingSystem.id}
+                                                    onChange={(e) => {
+                                                        const cs = COOLING_SYSTEMS.find(c => c.id === e.target.value);
+                                                        if (cs) setCoolingSystem(cs);
+                                                    }}
+                                                    className="w-full bg-slate-900 border border-slate-800 text-xs text-white rounded p-1.5 focus:outline-none"
+                                                >
+                                                    {COOLING_SYSTEMS.map((system) => (
+                                                        <option key={system.id} value={system.id}>{system.name}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-[11px] text-slate-400 mb-1 flex justify-between">
+                                                    <span>Coste Energía:</span>
+                                                    <span className="text-[10px] text-slate-500">SEER: {coolingSystem.seer} (Efic.)</span>
+                                                </label>
+                                                <div className="flex gap-2 items-center">
+                                                    <input
+                                                        type="number"
+                                                        step="0.001"
+                                                        value={coolingCostRate}
+                                                        onChange={(e) => setCoolingCostRate(parseFloat(e.target.value) || 0)}
+                                                        className="w-full bg-slate-900 border border-slate-800 text-xs text-slate-200 p-1.5 rounded focus:outline-none font-semibold"
+                                                    />
+                                                    <span className="text-xs text-slate-400">€/kWh</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* COSTE DE INSTALACIÓN */}
+                                    <div className="pt-3 border-t border-slate-900">
+                                        <div className="flex justify-between items-center mb-1">
+                                            <label className="text-xs font-semibold text-slate-400">Presupuesto instalación material:</label>
+                                            <span className="text-blue-400 font-bold text-xs">{costPerM2} €/m²</span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            min="10"
+                                            max="150"
+                                            step="5"
+                                            value={costPerM2}
+                                            onChange={(e) => setCostPerM2(parseInt(e.target.value))}
+                                            className="w-full accent-blue-500 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* DESGLOSE DE RESULTADOS */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                                    <div className="bg-slate-950 p-4 border border-orange-500/20 rounded-xl relative overflow-hidden">
+                                        <h4 className="text-xs font-bold text-orange-400 uppercase tracking-wide border-b border-orange-500/10 pb-1.5 mb-2.5">
+                                            🔥 Balance en Invierno
+                                        </h4>
+                                        <div className="space-y-1.5 text-xs">
+                                            <div className="flex justify-between">
+                                                <span className="text-slate-400">Pérdida original:</span>
+                                                <span className="text-slate-300 font-semibold">{financialSavings.heating.lossBase} kWh/año</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-slate-400">Pérdida aislada:</span>
+                                                <span className="text-slate-300 font-semibold">{financialSavings.heating.lossDesign} kWh/año</span>
+                                            </div>
+                                            <div className="flex justify-between text-emerald-400 font-bold pt-1.5 border-t border-slate-900">
+                                                <span>Ahorro Combust.:</span>
+                                                <span>{financialSavings.heating.savedFinal} kWh/año</span>
+                                            </div>
+                                            <div className="flex justify-between text-emerald-400 font-extrabold">
+                                                <span>Ahorro Invierno:</span>
+                                                <span>{financialSavings.heating.moneySaved} €/año</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-slate-950 p-4 border border-cyan-500/20 rounded-xl relative overflow-hidden">
+                                        <h4 className="text-xs font-bold text-cyan-400 uppercase tracking-wide border-b border-cyan-500/10 pb-1.5 mb-2.5">
+                                            ❄️ Balance en Verano
+                                        </h4>
+                                        <div className="space-y-1.5 text-xs">
+                                            <div className="flex justify-between">
+                                                <span className="text-slate-400">Ganancia original:</span>
+                                                <span className="text-slate-300 font-semibold">{financialSavings.cooling.gainBase} kWh/año</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-slate-400">Ganancia aislada:</span>
+                                                <span className="text-slate-300 font-semibold">{financialSavings.cooling.gainDesign} kWh/año</span>
+                                            </div>
+                                            <div className="flex justify-between text-emerald-400 font-bold pt-1.5 border-t border-slate-900">
+                                                <span>Ahorro Eléctrico:</span>
+                                                <span>{financialSavings.cooling.savedFinal} kWh/año</span>
+                                            </div>
+                                            <div className="flex justify-between text-emerald-400 font-extrabold">
+                                                <span>Ahorro Verano:</span>
+                                                <span>{financialSavings.cooling.moneySaved} €/año</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* RESUMEN DE AMORTIZACIÓN */}
+                                <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800">
+                                    <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wide mb-3 text-center">
+                                        💼 Resumen Financiero Consolidado (Anual)
+                                    </h4>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                                        <div className="p-2 border border-slate-900 rounded-lg">
+                                            <span className="block text-[10px] text-slate-500 uppercase font-semibold">Energía Evitada</span>
+                                            <span className="text-xl font-bold text-sky-400 block mt-1">{financialSavings.total.savedUseful} kWh</span>
+                                            <span className="text-[9px] text-slate-500">Útil Evitada</span>
+                                        </div>
+                                        <div className="p-2 border border-slate-900 rounded-lg">
+                                            <span className="block text-[10px] text-slate-500 uppercase font-semibold">Ahorro Económico</span>
+                                            <span className="text-xl font-extrabold text-emerald-400 block mt-1">{financialSavings.total.moneySaved} €/año</span>
+                                            <span className="text-[9px] text-slate-500">Neto Combinado</span>
+                                        </div>
+                                        <div className="p-2 border border-slate-900 rounded-lg">
+                                            <span className="block text-[10px] text-slate-500 uppercase font-semibold">Inversión Total</span>
+                                            <span className="text-xl font-bold text-slate-300 block mt-1">{financialSavings.total.investment} €</span>
+                                            <span className="text-[9px] text-slate-500">Mano de Obra + Mat.</span>
+                                        </div>
+                                        <div className="p-2 border border-slate-900 rounded-lg bg-emerald-950/20">
+                                            <span className="block text-[10px] text-emerald-400 uppercase font-bold">Amortización</span>
+                                            <span className="text-xl font-extrabold text-emerald-300 block mt-1">
+                                                {financialSavings.total.paybackYears === 0 ? "Inmediata" : `${financialSavings.total.paybackYears} años`}
+                                            </span>
+                                            <span className="text-[9px] text-emerald-500">Retorno Neto</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+
+                        </div>
+                    </main>
+
+                    {/* FOOTER */}
+                    <footer className="bg-slate-900 border-t border-slate-800 text-center py-4 text-xs text-slate-500 mt-auto">
+                        <div className="max-w-7xl mx-auto px-4">
+                            Calculadora Termo-Física de Envolventes CTE DB-HE 2019. Basada en la norma UNE-EN ISO 6946 y UNE-EN ISO 13788.
+                        </div>
+                    </footer>
+                </div>
+            );
+        }
+
+        const rootElement = document.getElementById('root');
+        const root = ReactDOM.createRoot(rootElement);
+        root.render(<App />);
+    </script>
+</body>
+</html>
